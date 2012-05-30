@@ -26,7 +26,7 @@
  * @copyright See the included NOTICE.md file for more information.
  * @link http://aws.amazon.com/php/ PHP Developer Center
  */
-class AuthV4Query extends Signer implements Signable
+class AuthV4JSON extends Signer implements Signable
 {
 	/**
 	 * Constructs a new instance of the <AuthV4Query> class.
@@ -59,13 +59,24 @@ class AuthV4Query extends Signer implements Signable
 		$this->headers = array();
 		$this->signed_headers = array();
 		$this->canonical_headers = array();
-		$this->query = array('body' => is_array($this->payload) ? $this->payload : array());
+		$this->query = array();
+
+		// Prepare JSON structure
+		$decoded = json_decode($this->payload, true);
+		$data = (array) (is_array($decoded) ? $decoded : $this->payload);
+		unset($data['curlopts']);
+		unset($data['returnCurlHandle']);
+		$this->body = json_encode($data);
+		if ($this->body === '' || $this->body === '[]')
+		{
+			$this->body = '{}';
+		}
 
 		// Do we have an authentication token?
 		if ($this->auth_token)
 		{
 			$this->headers['X-Amz-Security-Token'] = $this->auth_token;
-			$this->query['body']['SecurityToken'] = $this->auth_token;
+			$this->query['SecurityToken'] = $this->auth_token;
 		}
 
 		// Manage the key-value pairs that are used in the query.
@@ -75,17 +86,17 @@ class AuthV4Query extends Signer implements Signable
 		}
 		else
 		{
-			$this->query['body']['Action'] = $this->operation;
+			$this->query['Action'] = $this->operation;
 		}
 
 		// Only add it if it exists.
 		if ($this->api_version)
 		{
-			$this->query['body']['Version'] = $this->api_version;
+			$this->query['Version'] = $this->api_version;
 		}
 
 		// Do a case-sensitive, natural order sort on the array keys.
-		uksort($this->query['body'], 'strcmp');
+		uksort($this->query, 'strcmp');
 
 		// Remove the default scheme from the domain.
 		$domain = str_replace(array('http://', 'https://'), '', $this->endpoint);
@@ -120,10 +131,9 @@ class AuthV4Query extends Signer implements Signable
 		// Instantiate the request class
 		$request = new $this->request_class($request_url, $this->proxy, $helpers, $this->credentials);
 		$request->set_method('POST');
-		$request->set_body($this->canonical_querystring());
-		$this->querystring = $this->canonical_querystring();
-
-		$this->headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
+		$request->set_body($this->body);
+		$this->querystring = $this->body;
+		$this->headers['Content-Type'] = 'application/x-amz-json-1.1';
 		$this->headers['X-Amz-Target'] = $x_amz_target;
 
 		// Pass along registered stream callbacks
@@ -140,7 +150,6 @@ class AuthV4Query extends Signer implements Signable
 		// Add authentication headers
 		$this->headers['X-Amz-Date'] = $timestamp;
 		$this->headers['Content-Length'] = strlen($this->querystring);
-		$this->headers['Content-MD5'] = $this->util->hex_to_base64(md5($this->querystring));
 		$this->headers['Host'] = $host_header;
 
 		// Sort headers
@@ -159,7 +168,6 @@ class AuthV4Query extends Signer implements Signable
 		}
 
 		$this->headers['Authorization'] = $this->authorization($timestamp);
-
 		$request->add_header('Authorization', $this->headers['Authorization']);
 		$request->request_headers = $this->headers;
 
@@ -250,7 +258,7 @@ class AuthV4Query extends Signer implements Signable
 		$parts[] = ''; // $parts[] = $this->canonical_querystring();
 		$parts[] = implode("\n", $this->canonical_headers) . "\n";
 		$parts[] = implode(';', $this->signed_headers);
-		$parts[] = $this->hex16($this->hash($this->canonical_querystring()));
+		$parts[] = $this->hex16($this->hash($this->body));
 
 		$this->canonical_request = implode("\n", $parts);
 
@@ -283,7 +291,7 @@ class AuthV4Query extends Signer implements Signable
 	protected function service()
 	{
 		$pieces = explode('.', $this->endpoint);
-		return ($pieces[0] === 'email') ? 'ses' : $pieces[0];
+		return $pieces[0];
 	}
 
 	/**
@@ -305,7 +313,7 @@ class AuthV4Query extends Signer implements Signable
 	{
 		if (!isset($this->canonical_querystring))
 		{
-			$this->canonical_querystring = $this->util->to_signable_string($this->query['body']);
+			$this->canonical_querystring = $this->util->to_signable_string($this->query);
 		}
 
 		return $this->canonical_querystring;
